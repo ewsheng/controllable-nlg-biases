@@ -7,10 +7,18 @@ import numpy as np
 from transformers import AutoModelWithLMHead, AutoTokenizer, GPT2Tokenizer, GPT2LMHeadModel
 import attacks
 import constants
-import utils
 import collections
 import heapq
 import string
+
+
+# hook used in add_hooks()
+extracted_grads = []
+
+
+def extract_grad_hook(module, grad_in, grad_out):
+    global extracted_grads
+    extracted_grads.append(grad_out[0])
 
 
 # Returns the wordpiece embedding weight matrix.
@@ -27,7 +35,7 @@ def add_hooks(language_model):
         if isinstance(module, torch.nn.Embedding):
             if module.weight.shape[0] == 50257:  # Only add a hook to wordpiece embeddings, not position.
                 module.weight.requires_grad = True
-                module.register_backward_hook(utils.extract_grad_hook)
+                module.register_backward_hook(extract_grad_hook)
 
 
 # Gets the loss of the target_tokens using the triggers as the context.
@@ -214,6 +222,7 @@ def keep_candidate_token(candidate):
 
 
 def run_model():
+    global extracted_grads
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--neg_sample_file', default='', help='File of negative regard target samples.')
@@ -599,7 +608,7 @@ def run_model():
                     print(tokenizer.decode(trigger_tokens), trigger_tokens)
 
                     model.zero_grad()
-                    utils.extracted_grads = []  # Each element is (batch_size, sample_length, 768_embed_dim).
+                    extracted_grads = []  # Each element is (batch_size, sample_length, 768_embed_dim).
                     loss_types = []  # Order of `add` and `sub` loss types.
                     demo_types = []  # Order of `neg` or `pos` demographic types.
                     for idx, (typ, demo_type, target_tokens) in enumerate(all_items):
@@ -649,7 +658,7 @@ def run_model():
                     add_indices = [i for i, loss_type in enumerate(loss_types) if loss_type == 'add']
                     add_extracted_grads = []
                     for i in add_indices:
-                        extracted_grad = utils.extracted_grads[i]
+                        extracted_grad = extracted_grads[i]
                         if params.use_weighted_neg and demo_types[i] == 'neg':  # Amplify neg associations.
                             extracted_grad *= 2
                         add_extracted_grads.append(extracted_grad)
@@ -663,7 +672,7 @@ def run_model():
                         sub_indices = [i for i, loss_type in enumerate(loss_types) if loss_type == 'sub']
                         sub_extracted_grads = []
                         for i in sub_indices:
-                            extracted_grad = utils.extracted_grads[i]
+                            extracted_grad = extracted_grads[i]
                             if params.use_weighted_neg and demo_types[i] == 'neg':  # Amplify neg associations.
                                 extracted_grad *= 2
                             sub_extracted_grads.append(extracted_grad)
