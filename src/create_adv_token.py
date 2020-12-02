@@ -41,19 +41,19 @@ def add_hooks(language_model):
 # Gets the loss of the target_tokens using the triggers as the context.
 def get_loss(language_model, batch_size, trigger_tokens, demo_tokens, target_tensor, tokenizer,
              device=torch.device('cuda'), salience_token_items=None, use_original_loss=True, use_salience_loss=False,
-             use_weighted_salience_loss=False, trigger_position=constants.HEAD, model=constants.GPT2):
+             use_weighted_salience_loss=False, trigger_position=constants.HEAD, model_type=constants.GPT2):
     trigger_tensor = torch.tensor(trigger_tokens, device=device, dtype=torch.long).unsqueeze(0).repeat(batch_size, 1)
 
     complete_trigger_lengths = []
 
-    if model == constants.GPT2:
+    if model_type == constants.GPT2:
         respect_contexts = constants.GPT2_RCONTEXTS
         occupation_contexts = constants.GPT2_OCONTEXTS
-    elif model == constants.DIALOGPT:
+    elif model_type == constants.DIALOGPT:
         respect_contexts = constants.DIALOGPT_RCONTEXTS
         occupation_contexts = constants.DIALOGPT_OCONTEXTS
     else:
-        raise NotImplementedError('Unrecognized model:', model)
+        raise NotImplementedError('Unrecognized model type:', model_type)
 
     for sample_idx, target_token_sample in enumerate(target_tensor):
         num_prefix_tokens = len(trigger_tokens)
@@ -70,12 +70,12 @@ def get_loss(language_model, batch_size, trigger_tokens, demo_tokens, target_ten
             target_str = tokenizer.decode(target_token_sample)  # Convert to string to find bias context strings.
             bias_context_tokens = None
             for c in respect_contexts + occupation_contexts:
-                if model == constants.GPT2:
+                if model_type == constants.GPT2:
                     context_after = c.strip()
                     if context_after in target_str:
                         bias_context_tokens = tokenizer.encode('The ' + context_after)[1:]  # Dummy first token so that the correct BPE token ID is used for the second token.
                         break
-                elif model == constants.DIALOGPT:
+                elif model_type == constants.DIALOGPT:
                     context_before = c[0].strip()
                     context_after = c[1].strip()
                     if context_after in target_str and context_before in target_str:
@@ -249,7 +249,10 @@ def run_model():
     parser.add_argument('--debias', default=0, help='Whether to generate triggers to debias. 0 = no debias, 1 = neutral '
                                                     'debias, 2 = neutral + positive debias.')
     parser.add_argument('--num_demographics', default=2, help='Whether to use 1 or 2 demographics.')
-    parser.add_argument('--model', default='gpt2', help='`gpt2` or `dialogpt`.')
+    parser.add_argument('--model_name_or_path', default='gpt2',
+                        help='Model name or path: gpt2, microsoft/DialoGPT-medium, etc.')
+    parser.add_argument('--tokenizer_name', default='', help='Tokenizer name if different from model name.')
+    parser.add_argument('--model_type',  default='gpt2', help='Currently either `gpt2` or `dialogpt`.')
     parser.add_argument('--batch_size', default=16, help='32 works well for CPU, 16 for GPU.')
     params = parser.parse_args()
 
@@ -271,6 +274,7 @@ def run_model():
     assert params.debias in [0, 1, 2]
     # 0 = no debias, 1 = associate neutral, dissociate everything else, 2 = associate positive + neutral, dissociate neg
     params.num_demographics = int(params.num_demographics)
+    params.batch_size = int(params.batch_size)
 
     print('Params', params)
 
@@ -280,12 +284,9 @@ def run_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print('Device: ', device)
 
-    if params.model == constants.GPT2:
-        tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-        model = GPT2LMHeadModel.from_pretrained('gpt2')
-    elif params.model == constants.DIALOGPT:
-        tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-medium")
-        model = AutoModelWithLMHead.from_pretrained("microsoft/DialoGPT-medium")
+    model = AutoModelWithLMHead.from_pretrained(params.model_name_or_path)
+    tokenizer = AutoTokenizer.from_pretrained(
+        params.tokenizer_name if params.tokenizer_name else params.model_name_or_path)
     model.eval()
     model.to(device)
 
@@ -349,23 +350,23 @@ def run_model():
 
     with open(params.neg_sample_file, 'r') as f:
         neg_target_texts = f.readlines()
-        if params.model == constants.GPT2:
+        if params.model_type == constants.GPT2:
             neg_target_texts = [l.strip() for l in neg_target_texts]
-        elif params.model == constants.DIALOGPT:
+        elif params.model_type == constants.DIALOGPT:
             neg_target_texts = [l.strip().split('\t') for l in neg_target_texts]
     with open(params.pos_sample_file, 'r') as f:
         pos_target_texts = f.readlines()
-        if params.model == constants.GPT2:
+        if params.model_type == constants.GPT2:
             pos_target_texts = [l.strip() for l in pos_target_texts]
-        elif params.model == constants.DIALOGPT:
+        elif params.model_type == constants.DIALOGPT:
             pos_target_texts = [l.strip().split('\t') for l in pos_target_texts]
     neu_target_texts = []
     if params.neu_sample_file:
         with open(params.neu_sample_file, 'r') as f:
             neu_target_texts = f.readlines()
-            if params.model == constants.GPT2:
+            if params.model_type == constants.GPT2:
                 neu_target_texts = [l.strip() for l in neu_target_texts]
-            elif params.model == constants.DIALOGPT:
+            elif params.model_type == constants.DIALOGPT:
                 neu_target_texts = [l.strip().split('\t') for l in neu_target_texts]
 
     if constants.DEMO not in params.trigger_position:
@@ -391,18 +392,18 @@ def run_model():
                 if mod_idx >= neg_mod_number:
                     mod_idx = mod_idx % neg_mod_number
                 neg_name = neg_names[mod_idx].strip()
-                if params.model == constants.GPT2:
+                if params.model_type == constants.GPT2:
                     neg_demo_neg_target_texts += [neg_name + ' ' + l]
-                elif params.model == constants.DIALOGPT:
+                elif params.model_type == constants.DIALOGPT:
                     neg_demo_neg_target_texts += [l[0] + ' ' + neg_name + ' ' + l[1]]
 
                 mod_idx = idx % batch_size_mod_number
                 if mod_idx >= pos_mod_number:
                     mod_idx = mod_idx % pos_mod_number
                 pos_name = pos_names[mod_idx].strip()
-                if params.model == constants.GPT2:
+                if params.model_type == constants.GPT2:
                     pos_demo_neg_target_texts += [pos_name + ' ' + l]
-                elif params.model == constants.DIALOGPT:
+                elif params.model_type == constants.DIALOGPT:
                     pos_demo_neg_target_texts += [l[0] + ' ' + pos_name + ' ' + l[1]]
 
             for idx, l in enumerate(pos_target_texts):
@@ -410,18 +411,18 @@ def run_model():
                 if mod_idx >= neg_mod_number:
                     mod_idx = mod_idx % neg_mod_number
                 neg_name = neg_names[mod_idx].strip()
-                if params.model == constants.GPT2:
+                if params.model_type == constants.GPT2:
                     neg_demo_pos_target_texts += [neg_name + ' ' + l]
-                elif params.model == constants.DIALOGPT:
+                elif params.model_type == constants.DIALOGPT:
                     neg_demo_pos_target_texts += [l[0] + ' ' + neg_name + ' ' + l[1]]
 
                 mod_idx = idx % batch_size_mod_number
                 if mod_idx >= pos_mod_number:
                     mod_idx = mod_idx % pos_mod_number
                 pos_name = pos_names[mod_idx].strip()
-                if params.model == constants.GPT2:
+                if params.model_type == constants.GPT2:
                     pos_demo_pos_target_texts += [pos_name + ' ' + l]
-                elif params.model == constants.DIALOGPT:
+                elif params.model_type == constants.DIALOGPT:
                     pos_demo_pos_target_texts += [l[0] + ' ' + pos_name + ' ' + l[1]]
 
             for idx, l in enumerate(neu_target_texts):
@@ -429,18 +430,18 @@ def run_model():
                 if mod_idx >= neg_mod_number:
                     mod_idx = mod_idx % neg_mod_number
                 neg_name = neg_names[mod_idx].strip()
-                if params.model == constants.GPT2:
+                if params.model_type == constants.GPT2:
                     neg_demo_neu_target_texts += [neg_name + ' ' + l]
-                elif params.model == constants.DIALOGPT:
+                elif params.model_type == constants.DIALOGPT:
                     neg_demo_neu_target_texts += [l[0] + ' ' + neg_name + ' ' + l[1]]
 
                 mod_idx = idx % batch_size_mod_number
                 if mod_idx >= pos_mod_number:
                     mod_idx = mod_idx % pos_mod_number
                 pos_name = pos_names[mod_idx].strip()
-                if params.model == constants.GPT2:
+                if params.model_type == constants.GPT2:
                     pos_demo_neu_target_texts += [pos_name + ' ' + l]
-                elif params.model == constants.DIALOGPT:
+                elif params.model_type == constants.DIALOGPT:
                     pos_demo_neu_target_texts += [l[0] + ' ' + pos_name + ' ' + l[1]]
 
         else:  # Use demographic groups.
@@ -577,7 +578,7 @@ def run_model():
             # rand_trigger_tokens = np.random.randint(total_vocab_size, size=old_num_trigger_tokens - trigger_init_len)
             rand_trigger_tokens = [tokenizer.encode('x the')[-1]] * (old_num_trigger_tokens - trigger_init_len)
             trigger_tokens = np.concatenate((trigger_tokens, rand_trigger_tokens), axis=0)
-        if params.model == constants.DIALOGPT:  # Add eos after trigger.
+        if params.model_type == constants.DIALOGPT:  # Add eos after trigger.
             trigger_tokens = np.concatenate((trigger_tokens, [tokenizer.eos_token_id]), axis=0)
         print('Random initial trigger:', tokenizer.decode(trigger_tokens))
 
@@ -644,13 +645,12 @@ def run_model():
                         else:
                             salience_token_items_tensor = None
 
-                        loss, _ = get_loss(model, params.batch_size, trigger_tokens, demo_tokens, target_tokens, tokenizer, device,
-                                        salience_token_items=salience_token_items_tensor,
-                                        use_original_loss=params.use_original_loss,
-                                        use_salience_loss=params.use_salience_loss,
-                                        use_weighted_salience_loss=params.use_weighted_salience_loss,
-                                        trigger_position=params.trigger_position,
-                                        model=params.model)
+                        loss, _ = get_loss(
+                            model, params.batch_size, trigger_tokens, demo_tokens, target_tokens, tokenizer, device,
+                            salience_token_items=salience_token_items_tensor,
+                            use_original_loss=params.use_original_loss, use_salience_loss=params.use_salience_loss,
+                            use_weighted_salience_loss=params.use_weighted_salience_loss,
+                            trigger_position=params.trigger_position, model_type=params.model_type)
                         loss.backward()
                         del loss, salience_token_items_tensor
 
@@ -746,14 +746,12 @@ def run_model():
                                 salience_token_items_tensor = None
 
                             # get loss, update current best if its lower loss
-                            loss, mask_and_target = get_loss(model, params.batch_size, candidate_trigger_tokens, demo_tokens, target_tokens,
-                                            tokenizer, device, salience_token_items=salience_token_items_tensor,
-                                            use_original_loss=params.use_original_loss,
-                                            use_salience_loss=params.use_salience_loss,
-                                            use_weighted_salience_loss=params.use_weighted_salience_loss,
-                                            trigger_position=params.trigger_position,
-                                            model=params.model)
-
+                            loss, mask_and_target = get_loss(
+                                model, params.batch_size, candidate_trigger_tokens, demo_tokens, target_tokens,
+                                tokenizer, device, salience_token_items=salience_token_items_tensor,
+                                use_original_loss=params.use_original_loss, use_salience_loss=params.use_salience_loss,
+                                use_weighted_salience_loss=params.use_weighted_salience_loss,
+                                trigger_position=params.trigger_position, model_type=params.model_type)
                             if typ == 'add':
                                 # Losses are averaged per non-ignored element per sample per batch.
                                 # Since we are calculating overall loss over many batches, re-calc average.
