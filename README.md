@@ -56,7 +56,9 @@ usage: create_adv_token.py [-h]
                            [--trigger_position TRIGGER_POSITION]
                            [--debias DEBIAS]
                            [--num_demographics NUM_DEMOGRAPHICS]
-                           [--model MODEL]
+                           [--model_name_or_path MODEL_NAME_OR_PATH]
+                           [--tokenizer_name TOKENIZER_NAME]
+                           [--model_type MODEL_TYPE] 
                            [--batch_size BATCH_SIZE]
 
 optional arguments:
@@ -103,10 +105,16 @@ optional arguments:
                         1 = neutral debias, 2 = neutral + positive debias.
   --num_demographics NUM_DEMOGRAPHICS
                         Whether to use 1 or 2 demographics.
-  --model MODEL         `gpt2` or `dialogpt`.
+  --model_name_or_path MODEL_NAME_OR_PATH
+                        Model name or path: gpt2, microsoft/DialoGPT-medium,
+                        etc.
+  --tokenizer_name TOKENIZER_NAME
+                        Tokenizer name if different from model name.
+  --model_type MODEL_TYPE
+                        Currently either `gpt2` or `dialogpt`.
   --batch_size BATCH_SIZE
                         32 works well for CPU, 16 for GPU.
-  ```
+```
   
 For example, if we wanted to find a trigger for GPT2 that associates positive social connotations 
 with "The woman" and negative social connotations with "The man", we could run:
@@ -128,7 +136,8 @@ Now you can run `src/eval_triggers.py` to use a found bias trigger to generate s
 
 ```
 python src/eval_triggers.py --help
-usage: eval_triggers.py [-h] [--trigger_dump_file TRIGGER_DUMP_FILE]
+usage: eval_triggers.py [-h] 
+                        [--trigger_dump_file TRIGGER_DUMP_FILE]
                         [--trigger_label_output_dir TRIGGER_LABEL_OUTPUT_DIR]
                         [--regard_classifier_dir REGARD_CLASSIFIER_DIR]
                         [--trigger_position TRIGGER_POSITION]
