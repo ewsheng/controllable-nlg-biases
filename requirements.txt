@@ -1,5 +1,5 @@
 torch==1.2.0
-numpy==1.16.3
+numpy==1.22.0
 transformers==2.8.0
 scikit_learn==0.21.3
 seqeval==0.0.12
